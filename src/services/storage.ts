@@ -8,6 +8,7 @@ import {
   CurrencyCode 
 } from '../types/finance';
 import { DEFAULT_SYSTEM_CATEGORIES } from './seedData';
+import { db } from '../db/database';
 
 const CURRENT_USER_KEY = 'zenith_current_user_id';
 const USERS_LIST_KEY = 'zenith_registered_users';
@@ -26,6 +27,8 @@ export class StorageService {
 
   static saveUsers(users: UserProfile[]): void {
     localStorage.setItem(USERS_LIST_KEY, JSON.stringify(users));
+    // Asynchronously sync to IndexedDB
+    db.users.bulkPut(users).catch(() => {});
   }
 
   static getCurrentUserId(): string | null {
@@ -54,6 +57,7 @@ export class StorageService {
       users.push(profile);
     }
     this.saveUsers(users);
+    db.users.put(profile).catch(() => {});
   }
 
   // --- ISOLATED DATA KEYS ---
@@ -76,9 +80,9 @@ export class StorageService {
 
   static saveCustomCategories(userId: string, customCategories: Category[]): void {
     const customKey = this.getKey(userId, 'categories');
-    // Store only custom non-system categories
     const onlyCustom = customCategories.filter(c => !c.isSystem);
     localStorage.setItem(customKey, JSON.stringify(onlyCustom));
+    db.categories.bulkPut(onlyCustom).catch(() => {});
   }
 
   // --- TRANSACTIONS ---
@@ -95,6 +99,9 @@ export class StorageService {
   static saveTransactions(userId: string, transactions: Transaction[]): void {
     const key = this.getKey(userId, 'transactions');
     localStorage.setItem(key, JSON.stringify(transactions));
+    db.transactions.where('userId').equals(userId).delete().then(() => {
+      db.transactions.bulkPut(transactions).catch(() => {});
+    }).catch(() => {});
   }
 
   // --- BUDGETS ---
@@ -111,6 +118,9 @@ export class StorageService {
   static saveBudgets(userId: string, budgets: Budget[]): void {
     const key = this.getKey(userId, 'budgets');
     localStorage.setItem(key, JSON.stringify(budgets));
+    db.budgets.where('userId').equals(userId).delete().then(() => {
+      db.budgets.bulkPut(budgets).catch(() => {});
+    }).catch(() => {});
   }
 
   // --- BILLS ---
@@ -127,6 +137,9 @@ export class StorageService {
   static saveBills(userId: string, bills: Bill[]): void {
     const key = this.getKey(userId, 'bills');
     localStorage.setItem(key, JSON.stringify(bills));
+    db.bills.where('userId').equals(userId).delete().then(() => {
+      db.bills.bulkPut(bills).catch(() => {});
+    }).catch(() => {});
   }
 
   // --- NOTIFICATIONS ---
@@ -143,9 +156,12 @@ export class StorageService {
   static saveNotifications(userId: string, notifications: NotificationItem[]): void {
     const key = this.getKey(userId, 'notifications');
     localStorage.setItem(key, JSON.stringify(notifications));
+    db.notifications.where('userId').equals(userId).delete().then(() => {
+      db.notifications.bulkPut(notifications).catch(() => {});
+    }).catch(() => {});
   }
 
-  // --- CLEAN DATA INITIALIZATION (0 DEFAULT MOCK TRANSACTIONS) ---
+  // --- DATA INITIALIZATION ---
   static initializeUserData(userId: string, currency: CurrencyCode = 'NPR'): void {
     const initKey = this.getKey(userId, 'initialized');
     if (!localStorage.getItem(initKey)) {
@@ -168,6 +184,11 @@ export class StorageService {
     this.saveBudgets(userId, []);
     this.saveBills(userId, []);
     this.saveNotifications(userId, []);
+
+    db.transactions.where('userId').equals(userId).delete().catch(() => {});
+    db.budgets.where('userId').equals(userId).delete().catch(() => {});
+    db.bills.where('userId').equals(userId).delete().catch(() => {});
+    db.notifications.where('userId').equals(userId).delete().catch(() => {});
   }
 
   // --- EXPORT & IMPORT ---
