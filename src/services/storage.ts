@@ -7,7 +7,7 @@ import {
   NotificationItem, 
   CurrencyCode 
 } from '../types/finance';
-import { DEFAULT_SYSTEM_CATEGORIES, generateSeedData } from './seedData';
+import { DEFAULT_SYSTEM_CATEGORIES } from './seedData';
 
 const CURRENT_USER_KEY = 'zenith_current_user_id';
 const USERS_LIST_KEY = 'zenith_registered_users';
@@ -145,24 +145,29 @@ export class StorageService {
     localStorage.setItem(key, JSON.stringify(notifications));
   }
 
-  // --- SEEDING & DATA INITIALIZATION ---
+  // --- CLEAN DATA INITIALIZATION (0 DEFAULT MOCK TRANSACTIONS) ---
   static initializeUserData(userId: string, currency: CurrencyCode = 'NPR'): void {
-    const existingTxs = this.getTransactions(userId);
-    if (existingTxs.length === 0) {
-      const { seedTransactions, seedBudgets, seedBills } = generateSeedData(userId, currency);
-      this.saveTransactions(userId, seedTransactions);
-      this.saveBudgets(userId, seedBudgets);
-      this.saveBills(userId, seedBills);
+    const initKey = this.getKey(userId, 'initialized');
+    if (!localStorage.getItem(initKey)) {
+      localStorage.setItem(initKey, 'true');
+      this.saveTransactions(userId, []);
+      this.saveBudgets(userId, []);
+      this.saveBills(userId, []);
     }
   }
 
   // --- CLEAR / RESET DATA ---
   static clearUserData(userId: string): void {
+    localStorage.removeItem(this.getKey(userId, 'initialized'));
     localStorage.removeItem(this.getKey(userId, 'categories'));
     localStorage.removeItem(this.getKey(userId, 'transactions'));
     localStorage.removeItem(this.getKey(userId, 'budgets'));
     localStorage.removeItem(this.getKey(userId, 'bills'));
     localStorage.removeItem(this.getKey(userId, 'notifications'));
+    this.saveTransactions(userId, []);
+    this.saveBudgets(userId, []);
+    this.saveBills(userId, []);
+    this.saveNotifications(userId, []);
   }
 
   // --- EXPORT & IMPORT ---

@@ -53,7 +53,7 @@ export const AddTransactionModal: React.FC = () => {
       setDescription('');
       setDate(new Date().toISOString().split('T')[0]);
       setPaymentMethod('debit_card');
-      setAccount('Main Account');
+      setAccount('');
       setNotes('');
       // Default to first available expense category
       const firstExp = categories.find(c => c.type === 'expense');

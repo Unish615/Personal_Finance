@@ -13,7 +13,7 @@ export const OnboardingWizard: React.FC = () => {
   const [step, setStep] = useState<number>(1);
   const [name, setName] = useState<string>(user?.name || '');
   const [currency, setCurrency] = useState<CurrencyCode>(user?.currency || 'NPR');
-  const [incomeGoal, setIncomeGoal] = useState<string>('75000');
+  const [incomeGoal, setIncomeGoal] = useState<string>('');
 
   const handleNextStep = () => {
     if (step === 1) {

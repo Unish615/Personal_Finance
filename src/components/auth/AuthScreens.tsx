@@ -13,8 +13,8 @@ export const AuthScreens: React.FC = () => {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   
   // Login Form
-  const [loginEmail, setLoginEmail] = useState('alex@zenithfinance.io');
-  const [loginPass, setLoginPass] = useState('password123');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPass, setLoginPass] = useState('');
   const [loginError, setLoginError] = useState('');
 
   // Signup Form
