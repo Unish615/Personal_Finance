@@ -13,6 +13,7 @@ import {
 import { StorageService } from '../services/storage';
 import { calculateBillStatus, getNextDueDate, generateBillNotifications } from '../services/billEngine';
 import { useAuth } from './AuthContext';
+import { useDatabase } from '../hooks/useDatabase';
 
 export type TimeframePeriod = 
   | 'this_week' 
@@ -30,7 +31,7 @@ interface FinanceContextType {
   timeframe: TimeframePeriod;
   setTimeframe: (tf: TimeframePeriod) => void;
 
-  // Data Collections
+  // Data Collections (Live React Database State)
   transactions: Transaction[];
   categories: Category[];
   budgets: Budget[];
@@ -94,6 +95,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [timeframe, setTimeframe] = useState<TimeframePeriod>('this_month');
 
+  // React JS Database Hook (Dexie live queries)
+  const dbHook = useDatabase(userId);
+
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
@@ -110,25 +114,23 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [editingBill, setEditingBill] = useState<Bill | null>(null);
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null);
 
-  // Load User Data when active user changes
+  // Sync React DB Hook to local state
   useEffect(() => {
     if (!userId) return;
 
     StorageService.initializeUserData(userId, currency);
 
-    const txs = StorageService.getTransactions(userId);
-    const cats = StorageService.getCategories(userId);
-    const bdgs = StorageService.getBudgets(userId);
-    const blls = StorageService.getBills(userId);
-    const notifs = StorageService.getNotifications(userId);
+    const txs = dbHook.transactions.length > 0 ? dbHook.transactions : StorageService.getTransactions(userId);
+    const cats = dbHook.categories.length > 0 ? dbHook.categories : StorageService.getCategories(userId);
+    const bdgs = dbHook.budgets.length > 0 ? dbHook.budgets : StorageService.getBudgets(userId);
+    const blls = dbHook.bills.length > 0 ? dbHook.bills : StorageService.getBills(userId);
+    const notifs = dbHook.notifications.length > 0 ? dbHook.notifications : StorageService.getNotifications(userId);
 
-    // Update bill statuses automatically
     const updatedBills = blls.map(b => ({
       ...b,
       status: calculateBillStatus(b)
     }));
 
-    // Check & append bill notifications
     const newBillNotifs = generateBillNotifications(updatedBills, notifs);
     const mergedNotifs = [...newBillNotifs, ...notifs];
 
@@ -137,13 +139,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setBudgets(bdgs);
     setBills(updatedBills);
     setNotifications(mergedNotifs);
+  }, [userId, currency, dbHook.transactions, dbHook.budgets, dbHook.bills, dbHook.categories, dbHook.notifications]);
 
-    if (newBillNotifs.length > 0) {
-      StorageService.saveNotifications(userId, mergedNotifs);
-    }
-  }, [userId, currency]);
-
-  // Sync state changes to storage
+  // Sync state changes to storage & React JS database
   const saveTxs = (newTxs: Transaction[]) => {
     setTransactions(newTxs);
     if (userId) StorageService.saveTransactions(userId, newTxs);
@@ -181,15 +179,18 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       updatedAt: now
     };
     saveTxs([newTx, ...transactions]);
+    dbHook.addTransaction(newTx);
   };
 
   const updateTransaction = (id: string, updates: Partial<Transaction>) => {
     const updated = transactions.map(t => t.id === id ? { ...t, ...updates, updatedAt: new Date().toISOString() } : t);
     saveTxs(updated);
+    dbHook.updateTransaction(id, updates);
   };
 
   const deleteTransaction = (id: string) => {
     saveTxs(transactions.filter(t => t.id !== id));
+    dbHook.deleteTransaction(id);
   };
 
   // --- CRUD BUDGETS ---
@@ -204,15 +205,18 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       updatedAt: now
     };
     saveBdgs([newBdg, ...budgets]);
+    dbHook.addBudget(newBdg);
   };
 
   const updateBudget = (id: string, updates: Partial<Budget>) => {
     const updated = budgets.map(b => b.id === id ? { ...b, ...updates, updatedAt: new Date().toISOString() } : b);
     saveBdgs(updated);
+    dbHook.updateBudget(id, updates);
   };
 
   const deleteBudget = (id: string) => {
     saveBdgs(budgets.filter(b => b.id !== id));
+    dbHook.deleteBudget(id);
   };
 
   // --- CRUD BILLS ---
@@ -229,6 +233,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
     tempBill.status = calculateBillStatus(tempBill);
     saveBlls([tempBill, ...bills]);
+    dbHook.addBill(tempBill);
   };
 
   const updateBill = (id: string, updates: Partial<Bill>) => {
@@ -241,10 +246,12 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return b;
     });
     saveBlls(updated);
+    dbHook.updateBill(id, updates);
   };
 
   const deleteBill = (id: string) => {
     saveBlls(bills.filter(b => b.id !== id));
+    dbHook.deleteBill(id);
   };
 
   const markBillAsPaid = (billId: string) => {
@@ -253,7 +260,6 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     const todayStr = new Date().toISOString().split('T')[0];
 
-    // 1. Create a corresponding expense transaction
     addTransaction({
       categoryId: bill.categoryId,
       type: 'expense',
@@ -265,7 +271,6 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       notes: `Automated transaction from bill pay: ${bill.name}`
     });
 
-    // 2. If recurring, update due date to next cycle; if one-time, mark status paid
     if (bill.recurrence !== 'one-time') {
       const nextDue = getNextDueDate(bill.dueDate, bill.recurrence);
       updateBill(billId, {
@@ -291,6 +296,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       isSystem: false
     };
     saveCats([...categories, newCat]);
+    dbHook.addCategory(newCat);
   };
 
   const updateCategory = (id: string, updates: Partial<Category>) => {
@@ -298,11 +304,10 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const deleteCategory = (id: string, reassignCategoryId?: string): boolean => {
-    // Check if category is used in transactions
     const count = transactions.filter(t => t.categoryId === id).length;
 
     if (count > 0 && !reassignCategoryId) {
-      return false; // Requires reassignment
+      return false;
     }
 
     if (count > 0 && reassignCategoryId) {
@@ -314,16 +319,19 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
 
     saveCats(categories.filter(c => c.id !== id));
+    dbHook.deleteCategory(id);
     return true;
   };
 
   // --- NOTIFICATIONS ---
   const markNotificationRead = (id: string) => {
     saveNotifs(notifications.map(n => n.id === id ? { ...n, read: true } : n));
+    dbHook.markNotificationRead(id);
   };
 
   const clearAllNotifications = () => {
     saveNotifs([]);
+    dbHook.clearAllNotifications();
   };
 
   const unreadNotificationCount = useMemo(() => {
@@ -335,11 +343,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     if (!userId) return;
     StorageService.clearUserData(userId);
     StorageService.initializeUserData(userId, currency);
-    setTransactions(StorageService.getTransactions(userId));
+    setTransactions([]);
     setCategories(StorageService.getCategories(userId));
-    setBudgets(StorageService.getBudgets(userId));
-    setBills(StorageService.getBills(userId));
-    setNotifications(StorageService.getNotifications(userId));
+    setBudgets([]);
+    setBills([]);
+    setNotifications([]);
   };
 
   // --- CALCULATE SUMMARY METRICS & INSIGHTS ---
@@ -348,13 +356,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth() + 1;
 
-    // Current month transactions
     const currentMonthTxs = transactions.filter(t => {
       const d = new Date(t.date + 'T00:00:00');
       return d.getFullYear() === currentYear && (d.getMonth() + 1) === currentMonth;
     });
 
-    // Last month transactions
     const lastMonth = currentMonth === 1 ? 12 : currentMonth - 1;
     const lastMonthYear = currentMonth === 1 ? currentYear - 1 : currentYear;
     const lastMonthTxs = transactions.filter(t => {
@@ -378,19 +384,16 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       .filter(t => t.type === 'expense')
       .reduce((sum, t) => sum + t.amount, 0);
 
-    // Lifetime balance
     const totalAllIncome = transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
     const totalAllExpenses = transactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
     const totalBalance = totalAllIncome - totalAllExpenses;
 
     const netSavings = currentIncome - currentExpenses;
 
-    // Monthly Budget calculations
     const currentMonthBudgets = budgets.filter(b => b.month === currentMonth && b.year === currentYear);
     const totalBudget = currentMonthBudgets.reduce((sum, b) => sum + b.amount, 0);
     const budgetRemaining = totalBudget > 0 ? totalBudget - currentExpenses : 0;
 
-    // Trends calculation
     const incomeTrend = lastIncome > 0 ? ((currentIncome - lastIncome) / lastIncome) * 100 : 0;
     const expenseTrend = lastExpenses > 0 ? ((currentExpenses - lastExpenses) / lastExpenses) * 100 : 0;
     const balanceTrend = (lastIncome - lastExpenses) > 0 
@@ -410,14 +413,12 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
   }, [transactions, budgets]);
 
-  // Financial Insights Generator (Requirement #13)
   const insights: FinancialInsight[] = useMemo(() => {
     const list: FinancialInsight[] = [];
     const now = new Date();
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth() + 1;
 
-    // 1. Budget Insights
     const currentMonthBudgets = budgets.filter(b => b.month === currentMonth && b.year === currentYear);
     for (const b of currentMonthBudgets) {
       const cat = categories.find(c => c.id === b.categoryId);
@@ -445,7 +446,6 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     }
 
-    // 2. Top Expense Category Insight
     const expTxs = transactions.filter(t => t.type === 'expense');
     if (expTxs.length > 0) {
       const catTotals: Record<string, number> = {};
@@ -473,7 +473,6 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     }
 
-    // 3. Positive Savings Trend
     if (summaryMetrics.netSavings > 0) {
       list.push({
         id: 'ins_savings_positive',
